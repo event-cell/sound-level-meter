@@ -2,11 +2,15 @@ import curses
 from time import sleep
 import serial
 
-
 def clear_chars(win, y, x, num_chars):
     win.move(y, x)
     win.addstr(" " * num_chars)
 
+def get_high_nibble(byte):
+    return (byte & 0xF0) >> 4
+
+def get_low_nibble(byte):
+    return byte & 0x0F
 
 def main(stdscr):
     # Hide the cursor
@@ -38,7 +42,6 @@ def main(stdscr):
     try:
         message_buffer = bytearray()
         while True:
-            byte = ser.read(1)
             if byte:
                 # Check if the byte is the delimiter (165 -> '¥')
                 if byte == b"\xa5":  # '\xa5' is the hex representation of 165
@@ -51,14 +54,67 @@ def main(stdscr):
                                 # DB Noise Level
                                 win.addstr(1, 1, "dB: ")
                                 clear_chars(win, 1, 10, 10)
-                                clear_chars(win, 1, 40, 10)
-                                db = msg[1] * 10 + msg[2] / 10
+                                clear_chars(win, 1, 20, 10)
+                                hundreds = get_high_nibble(msg[1])
+                                tens = get_low_nibble(msg[1])
+                                ones = get_high_nibble(msg[2])
+                                tenths = get_low_nibble(msg[2])
+                                db = hundreds * 100 + tens * 10 + ones + tenths / 10
                                 win.addstr(1, 10, f"{db} dB")
-                                win.addstr(1, 40, msg.hex())
+                                win.addstr(1, 20, msg.hex())
+                            elif key == 0x02:
+                                row = 2
+                                win.addstr(row, 1, "Speed: ")
+                                clear_chars(win, row, 10, 10)
+                                win.addstr(row, 10, "FAST")
+                            elif key == 0x03:
+                                row = 2
+                                win.addstr(row, 1, "Speed: ")
+                                clear_chars(win, row, 10, 10)
+                                win.addstr(row, 10, "SLOW")
+                            elif key == 0x4B:
+                                row = 3
+                                win.addstr(row, 1, "Range: ")
+                                clear_chars(win, row, 10, 10)
+                                clear_chars(win, row, 20, 10)
+                                win.addstr(row, 10, "50 - 100")
+                                win.addstr(row, 20, msg.hex())
+                            elif key == 0x4C:
+                                row = 3
+                                win.addstr(row, 1, "Range: ")
+                                clear_chars(win, row, 10, 10)
+                                clear_chars(win, row, 20, 10)
+                                win.addstr(row, 10, "80 - 130")
+                                win.addstr(row, 20, msg.hex())
+                            elif key == 0x40:
+                                row = 3
+                                win.addstr(row, 1, "Range: ")
+                                clear_chars(win, row, 10, 10)
+                                clear_chars(win, row, 20, 10)
+                                win.addstr(row, 10, "30 - 130")
+                                win.addstr(row, 20, msg.hex())
+                            elif key == 0x30:
+                                row = 3
+                                win.addstr(row, 1, "Range: ")
+                                clear_chars(win, row, 10, 10)
+                                clear_chars(win, row, 20, 10)
+                                win.addstr(row, 10, "30 - 80")
+                                win.addstr(row, 20, msg.hex())
+                            elif key == 0x04:
+                                row = 4
+                                win.addstr(row, 1, "MIN/MAX: ")
+                                clear_chars(win, row, 10, 10)
+                                win.addstr(row, 10, "MAX")
+                            elif key == 0x05:
+                                row = 4
+                                win.addstr(row, 1, "MIN/MAX: ")
+                                clear_chars(win, row, 10, 10)
+                                win.addstr(row, 10, "MIN")
                             elif key == 0x0C:
-                                win.addstr(3, 1, "Unknown: ")
-                                clear_chars(win, 3, 10, 10)
-                                win.addstr(3, 10, msg.hex())
+                                row = 6
+                                win.addstr(row, 1, "Unknown: ")
+                                clear_chars(win, row, 10, 10)
+                                win.addstr(row, 10, msg.hex())
                             elif key == 0x1B:
                                 win.addstr(5, 1, "Unknown: ")
                                 clear_chars(win, 5, 10, 10)
@@ -67,17 +123,14 @@ def main(stdscr):
                                 win.addstr(7, 1, "Unknown: ")
                                 clear_chars(win, 7, 10, 10)
                                 win.addstr(7, 10, msg.hex())
-                            elif key == 0x4B:
-                                win.addstr(9, 1, "Unknown: ")
-                                clear_chars(win, 9, 10, 10)
-                                win.addstr(9, 10, msg.hex())
                             elif key == 0x0E:
                                 win.addstr(11, 1, "Unknown: ")
                                 clear_chars(win, 11, 10, 10)
                                 win.addstr(11, 10, msg.hex())
                             elif key == 0x08:
                                 win.addstr(13, 1, "Unknown: ")
-                                clear_chars(win, 13, 10, 10)
+                                win.move(13, 10)
+                                win.clrtoeol()
                                 win.addstr(13, 10, msg.hex())
                             elif key == 0x0B:
                                 win.addstr(15, 1, "Unknown: ")
@@ -87,26 +140,24 @@ def main(stdscr):
                                 win.addstr(17, 1, "Unknown: ")
                                 clear_chars(win, 17, 10, 10)
                                 win.addstr(17, 10, msg.hex())
-                            elif key == 0x02:
-                                win.addstr(19, 1, "Speed: ")
-                                clear_chars(win, 19, 10, 10)
-                                win.addstr(19, 10, "FAST")
-                            elif key == 0x03:
-                                win.addstr(19, 1, "Speed: ")
-                                clear_chars(win, 19, 10, 10)
-                                win.addstr(19, 10, "SLOW")
                             elif key == 0x1F:
                                 win.addstr(21, 1, "Unknown: ")
                                 clear_chars(win, 21, 10, 10)
                                 win.addstr(21, 10, msg.hex())
-                            elif key == 0x1A:
-                                win.addstr(23, 1, "Unknown: ")
-                                clear_chars(win, 23, 10, 10)
-                                win.addstr(23, 10, msg.hex())
                             elif key == 0x11:
-                                win.addstr(23, 20, "Unknown: ")
-                                clear_chars(win, 23, 30, 10)
-                                win.addstr(23, 30, msg.hex())
+                                win.addstr(22, 20, "Unknown: ")
+                                clear_chars(win, 22, 30, 10)
+                                win.addstr(22, 30, msg.hex())
+                            elif key == 0x0A:
+                                win.addstr(23, 1, "Record: ")
+                                clear_chars(win, 23, 9, 21)
+                                win.addstr(23, 9, "ON")
+                                win.addstr(23, 20, msg.hex())
+                            elif key == 0x1A:
+                                win.addstr(23, 1, "Record: ")
+                                clear_chars(win, 23, 9, 21)
+                                win.addstr(23, 9, "OFF")
+                                win.addstr(23, 20, msg.hex())
                             else:
                                 # Handle unknown byte
                                 win.move(24, 10)
