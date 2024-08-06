@@ -2,15 +2,19 @@ import curses
 from time import sleep
 import serial
 
+
 def clear_chars(win, y, x, num_chars):
     win.move(y, x)
     win.addstr(" " * num_chars)
 
+
 def get_high_nibble(byte):
     return (byte & 0xF0) >> 4
 
+
 def get_low_nibble(byte):
     return byte & 0x0F
+
 
 def main(stdscr):
     # Hide the cursor
@@ -42,6 +46,7 @@ def main(stdscr):
     try:
         message_buffer = bytearray()
         while True:
+            byte = ser.read(1)
             if byte:
                 # Check if the byte is the delimiter (165 -> '¥')
                 if byte == b"\xa5":  # '\xa5' is the hex representation of 165

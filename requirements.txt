@@ -1,0 +1,7 @@
+dash
+panda
+usb
+influxdb_client
+pushover
+paho-mqtt
+requests

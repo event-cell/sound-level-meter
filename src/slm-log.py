@@ -2,16 +2,14 @@
 # Original author: silkyclouds
 # License: GPL-3
 
-
 import logging
-import sys
-import usb.core
+import serial
 import time
 import traceback
 from datetime import datetime
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS
-from pushover import Client
+# from pushover import Pushover
 
 # Configure logging level and output format
 logging.basicConfig(
@@ -24,25 +22,25 @@ logger = logging.getLogger(__name__)
 # --------------------- Configuration Section ---------------------
 
 # InfluxDB host address (IP or URL)
-influxdb_host = "YOUR_INFLUXDB_HOST"
+influxdb_host = "localhost"
 # InfluxDB port (usually 8086)
 influxdb_port = 8086
 # InfluxDB authentication token
-influxdb_token = "YOUR_INFLUXDB_TOKEN"
+influxdb_token = ""
 # InfluxDB organization name
-influxdb_org = "YOUR_INFLUXDB_ORG"
+influxdb_org = "SDMA"
 # InfluxDB bucket name
-influxdb_bucket = "YOUR_INFLUXDB_BUCKET"
+influxdb_bucket = "SLM"
 # InfluxDB timeout in milliseconds
 influxdb_timeout = 20000
 
 # Pushover user key for notifications (leave empty to disable Pushover notifications)
-pushover_user_key = "YOUR_PUSHOVER_USER_KEY"
+pushover_user_key = ""
 # Pushover API token (leave empty to disable Pushover notifications)
-pushover_api_token = "YOUR_PUSHOVER_API_TOKEN"
+pushover_api_token = ""
 
 # Minimum noise level for logging events (in dB)
-minimum_noise_level = 80
+minimum_noise_level = 30
 
 # Message content for Pushover notifications
 pushover_message = "Lets bust these noise events"
@@ -50,15 +48,18 @@ pushover_message = "Lets bust these noise events"
 pushover_title = "Noise Buster"
 
 # Message to display when starting the script
-start_message = "Lets bust these noise events"
+start_message = "Noise Level Logging"
 
 # InfluxDB measurement name (where data will be written in the DB)
-influxdb_measurement = "noise_buster_events"
+influxdb_measurement = "noise_events"
 # Location tag for InfluxDB measurement
-influxdb_location = "noise_buster"
+influxdb_location = "noise"
 
 # dB adjustment for distance (in dB)
-dB_adjustment = 1
+dB_adjustment = 0
+
+# device path for serial communication
+serial_device = "/dev/ttyUSB0"
 
 # --------------------- End of Configuration Section ---------------------
 
@@ -68,6 +69,15 @@ failed_influxdb_pings = 0
 # Last recorded dB and timestamp
 last_dB = None
 last_timestamp = None
+
+
+# Functions to get the high and low nibbles of a byte
+def get_high_nibble(byte):
+    return (byte & 0xF0) >> 4
+
+
+def get_low_nibble(byte):
+    return byte & 0x0F
 
 
 # Function to check the health of the InfluxDB server
@@ -83,8 +93,8 @@ def check_influxdb_health():
 
     if failed_influxdb_pings >= 10:
         message = "InfluxDB server is down. Failed to respond to 10 consecutive pings."
-        if pushover_user_key and pushover_api_token:
-            client.send_message(message, title=pushover_title)
+        # if pushover_user_key and pushover_api_token:
+        #     client.send_message(message, title=pushover_title)
         logger.info(message)
         failed_influxdb_pings = 0
 
@@ -93,42 +103,73 @@ def check_influxdb_health():
 
 # Function to update noise level and log it
 def update():
-    global last_dB, last_timestamp
+    global dB, last_dB, last_timestamp
+    ser = serial.Serial(serial_device, 9600, timeout=1)
+    message_buffer = bytearray()
     while True:
-        ret = dev.ctrl_transfer(0xC0, 4, 0, 0, 200)
-        global dB
-        dB = (ret[0] + ((ret[1] & 3) * 256)) * 0.1 + 30
+        while True:
+            # receive bytes from serial until a db value is received
+            byte = ser.read(1)
+            if byte:
+                # Check if the byte is the delimiter (165 -> '¥')
+                if byte == b"\xa5":  # '\xa5' is the hex representation of 165
+                    if message_buffer:
+                        # Read the first byte of the message to determine the cursor position
+                        msg = message_buffer
+                        key = msg[0]
+                        if key:
+                            if key == 0x0D:
+                                # DB Noise Level
+                                hundreds = get_high_nibble(msg[1])
+                                tens = get_low_nibble(msg[1])
+                                ones = get_high_nibble(msg[2])
+                                tenths = get_low_nibble(msg[2])
+                                dB = hundreds * 100 + tens * 10 + ones + tenths / 10
+                                # logging.info({msg.hex()})
+                                # logging.info("Noise Level: %.1f dB", dB)
+                    message_buffer = (
+                        bytearray()
+                    )  # Reset the message buffer for the next message
+                    break
+                else:
+                    # Accumulate the byte in the buffer
+                    message_buffer += byte
+
         dB += dB_adjustment  # Apply dB adjustment based on distance
-        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        timestamp = timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
         if dB >= minimum_noise_level and (dB != last_dB or timestamp != last_timestamp):
             last_dB = dB
             last_timestamp = timestamp
             logger.info("%s, %.1f dB", timestamp, round(dB, 1))
 
-            data = [
-                {
-                    "measurement": influxdb_measurement,
-                    "tags": {"location": influxdb_location},
-                    "time": timestamp,
-                    "fields": {"level": round(dB, 1)},
-                }
-            ]
-            write_api.write(influxdb_bucket, record=data)
+            # data = [
+            #     {
+            #         "measurement": influxdb_measurement,
+            #         "tags": {"location": influxdb_location},
+            #         "time": timestamp,
+            #         "fields": {"level": round(dB, 1)},
+            #     }
+            # ]
+            # write_api.write(influxdb_bucket, record=data)
 
             # Log data to CSV
             with open("noise.csv", "a") as f:
                 f.write(f"{timestamp},{round(dB, 1)}\n")
 
-        time.sleep(0.5)
+        # time.sleep(0.25)
 
+
+# Main function Start
+#
+#
+
+global dB
 
 try:
-    if pushover_user_key and pushover_api_token:
-        client = Client(pushover_user_key, api_token=pushover_api_token)
-        client.send_message(pushover_message, title=pushover_title)
-
-    dev = usb.core.find(idVendor=0x16C0, idProduct=0x5DC)
+    # if pushover_user_key and pushover_api_token:
+    #     client = Client(pushover_user_key, api_token=pushover_api_token)
+    #     client.send_message(pushover_message, title=pushover_title)
 
     dB = 0
 
@@ -144,14 +185,14 @@ try:
 
     if influxdb_client.health():
         logger.info("Connected to InfluxDB successfully.")
-        if pushover_user_key and pushover_api_token:
-            client.send_message(
-                "Successfully connected to InfluxDB", title=pushover_title
-            )
+        # if pushover_user_key and pushover_api_token:
+        #     client.send_message(
+        #         "Successfully connected to InfluxDB", title=pushover_title
+        #     )
     else:
         logger.info("Error connecting to InfluxDB.")
-        if pushover_user_key and pushover_api_token:
-            client.send_message("Error connecting to InfluxDB", title=pushover_title)
+        # if pushover_user_key and pushover_api_token:
+        #     client.send_message("Error connecting to InfluxDB", title=pushover_title)
 
     # Start the InfluxDB server health check in a separate thread
     from threading import Thread
