@@ -6,7 +6,7 @@ import logging
 import serial
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS
 # from pushover import Pushover
@@ -61,6 +61,10 @@ dB_adjustment = 0
 # device path for serial communication
 serial_device = "/dev/ttyUSB0"
 
+# sample interval in milliseconds
+sample_interval = 250
+compliance_sample_interval = 1000
+
 # --------------------- End of Configuration Section ---------------------
 
 # Counter for failed InfluxDB pings
@@ -103,10 +107,24 @@ def check_influxdb_health():
 
 # Function to update noise level and log it
 def update():
-    global dB, last_dB, last_timestamp
+    global dB, last_dB, last_timestamp, key, next_sample_time, timestamp
+
+    # initialise variables to starting values
+    #
+    key = 0x00
     ser = serial.Serial(serial_device, 9600, timeout=1)
     message_buffer = bytearray()
+    now = datetime.now(timezone.utc)
+    timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4]
+    start_of_day = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    milliseconds_since_start_of_day = int((now - start_of_day).total_seconds() * 1000)
+    next_sample_time = milliseconds_since_start_of_day + sample_interval
+    next_compliance_sample_time = (
+        milliseconds_since_start_of_day + compliance_sample_interval
+    )
     while True:
+        # Scan incoming packets for a dB value
+        message_buffer = bytearray()  # Reset the message buffer for the next message
         while True:
             # receive bytes from serial until a db value is received
             byte = ser.read(1)
@@ -127,37 +145,51 @@ def update():
                                 dB = hundreds * 100 + tens * 10 + ones + tenths / 10
                                 # logging.info({msg.hex()})
                                 # logging.info("Noise Level: %.1f dB", dB)
-                    message_buffer = (
-                        bytearray()
-                    )  # Reset the message buffer for the next message
+                        # Calculate next sample time
+                        now = datetime.now(timezone.utc)
+                        timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4]
+                        start_of_day = datetime(
+                            now.year, now.month, now.day, tzinfo=timezone.utc
+                        )
+                        milliseconds_since_start_of_day = int(
+                            (now - start_of_day).total_seconds() * 1000
+                        )
                     break
                 else:
                     # Accumulate the byte in the buffer
                     message_buffer += byte
+        while True:
+            if (key == 0x0D) and (milliseconds_since_start_of_day >= next_sample_time):
+                next_sample_time = milliseconds_since_start_of_day + sample_interval
+                dB += dB_adjustment  # Apply dB adjustment based on distance
+                logger.info("%s, %.1f dB", timestamp, round(dB, 1))
 
-        dB += dB_adjustment  # Apply dB adjustment based on distance
-        timestamp = timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                # data = [
+                #     {
+                #         "measurement": influxdb_measurement,
+                #         "tags": {"location": influxdb_location},
+                #         "time": timestamp,
+                #         "fields": {"level": round(dB, 1)},
+                #     }
+                # ]
+                # write_api.write(influxdb_bucket, record=data)
 
-        if dB >= minimum_noise_level and (dB != last_dB or timestamp != last_timestamp):
-            last_dB = dB
-            last_timestamp = timestamp
-            logger.info("%s, %.1f dB", timestamp, round(dB, 1))
+                # Log data to CSV
+                # Full resolution
+                with open("noise.csv", "a") as f:
+                    f.write(f"{timestamp},{round(dB, 1)}\n")
 
-            # data = [
-            #     {
-            #         "measurement": influxdb_measurement,
-            #         "tags": {"location": influxdb_location},
-            #         "time": timestamp,
-            #         "fields": {"level": round(dB, 1)},
-            #     }
-            # ]
-            # write_api.write(influxdb_bucket, record=data)
-
-            # Log data to CSV
-            with open("noise.csv", "a") as f:
-                f.write(f"{timestamp},{round(dB, 1)}\n")
-
-        # time.sleep(0.25)
+                # Compliance resolution
+                if milliseconds_since_start_of_day >= next_compliance_sample_time:
+                    next_compliance_sample_time = (
+                        milliseconds_since_start_of_day + compliance_sample_interval
+                    )
+                    with open("noise_1s.csv", "a") as f:
+                        f.write(f"{timestamp},{round(dB, 1)}\n")
+                break
+            else:
+                # Discard the current sample and select the next sample
+                break
 
 
 # Main function Start
@@ -197,7 +229,7 @@ try:
     # Start the InfluxDB server health check in a separate thread
     from threading import Thread
 
-    Thread(target=check_influxdb_health).start()
+    # Thread(target=check_influxdb_health).start()
 
     # Start updating noise level
     update()
