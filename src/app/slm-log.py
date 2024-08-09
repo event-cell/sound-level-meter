@@ -55,6 +55,21 @@ log_tz = pytz.timezone(config.get("Monitoring", "timezone"))
 
 # --------------------- End of Configuration  ---------------------
 
+# --------------------- Initialise Connections  ---------------------
+# InfluxDB connection
+influxdb_client = InfluxDBClient(
+    url=f"http://{influxdb_host}:{influxdb_port}",
+    token=influxdb_token,
+    org=influxdb_org,
+    timeout=influxdb_timeout,
+)
+write_api = influxdb_client.write_api(write_options=SYNCHRONOUS)
+# Pushover connection
+if pushover_group_key and pushover_app_api_token:
+    po_api = Client(pushover_group_key, pushover_app_api_token)
+
+# --------------------- End Initialise Connections  ---------------------
+
 # Counter for failed InfluxDB pings
 failed_influxdb_pings = 0
 
@@ -63,7 +78,7 @@ last_dB = None
 last_timestamp = None
 
 
-# Functions to get the high and low nibbles of a byte
+# Get the high and low nibbles of a byte
 def get_high_nibble(byte):
     return (byte & 0xF0) >> 4
 
@@ -72,6 +87,7 @@ def get_low_nibble(byte):
     return byte & 0x0F
 
 
+# Write data to InfluxDB
 def write_data_to_influxdb(dB, timestamp):
     point = (
         Point(influxdb_measurement)
@@ -79,52 +95,36 @@ def write_data_to_influxdb(dB, timestamp):
         .field("dB", dB)
         .time(timestamp, WritePrecision.MS)
     )
-
-    write_api.write(bucket=influxdb_bucket, org=influxdb_org, record=point)
-
-
-# Function to check the health of the InfluxDB server
-def check_influxdb_health():
-    global failed_influxdb_pings
     try:
-        if influxdb_client.health():
-            failed_influxdb_pings = 0
-        else:
-            failed_influxdb_pings += 1
+        write_api.write(bucket=influxdb_bucket, org=influxdb_org, record=point)
     except Exception as e:
-        failed_influxdb_pings += 1
+        logger.error(f"Error writing to InfluxDB")
 
-    if failed_influxdb_pings >= 10:
-        message = "InfluxDB server is down. Failed to respond to 10 consecutive pings."
-        # if pushover_user_key and pushover_api_token:
-        #     client.send_message(message, title=pushover_msg_title)
-        logger.info(message)
-        failed_influxdb_pings = 0
 
-    time.sleep(5)
+def send_pushover_message(message, title=None):
+    if po_api:
+        if title:
+            pushover_title = title
+        else:
+            pushover_title = pushover_msg_title
+        po_send = po_api.send(Message(message, title=pushover_title))
+        logger.info(f"Pushover Send returned {po_send}")
 
 
 # Function to update noise level and log it
 def update():
-    global \
-        dB, \
-        last_dB, \
-        last_timestamp, \
-        key, \
-        next_sample_time, \
-        timestamp, \
-        database_timestamp
-
-    # initialise variables to starting values
-    #
     # Initialize variables
+    # Data processing variables
+    dB = None
+    key = None
     tracking_peak = False
-    last_dB = None
-    last_timestamp = None
 
-    key = 0x00
+    # Serial communication variables
     ser = serial.Serial(serial_device, 9600, timeout=1)
     message_buffer = bytearray()
+    key = 0x00
+
+    # time tracking variables
     now = datetime.now(pytz.utc)
     start_of_day = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
     milliseconds_since_start_of_day = int((now - start_of_day).total_seconds() * 1000)
@@ -133,6 +133,7 @@ def update():
         milliseconds_since_start_of_day + compliance_sample_interval
     )
     current_date = now.astimezone(log_tz).strftime("%Y-%m-%d")
+
     while True:
         # Scan incoming packets for a dB value
         message_buffer = bytearray()  # Reset the message buffer for the next message
@@ -192,14 +193,10 @@ def update():
 
                     if sample_count >= 20:
                         # Log the maximum dB value found in the 20 samples
-                        if pushover_group_key and pushover_app_api_token:
-                            po_send = po_api.send(
-                                Message(
-                                    f"Peak noise level of {max_dB} dB",
-                                    title=pushover_msg_title,
-                                )
-                            )
-                            logger.info("Peak noise level of %.1f dB", max_dB)
+                        send_pushover_message(
+                            f"VIOLATION: Peak Noise Level of {max_dB} dB"
+                        )
+                        logger.info("VIOLATION: Peak Noise Level of %.1f dB", max_dB)
                         tracking_peak = False  # Stop tracking after logging the peak
                         max_dB = None  # Reset the peak value
                         sample_count = 0  # Reset the sample count
@@ -222,54 +219,31 @@ def update():
                 break
 
 
-# Main function Start
+def main():
+    try:
+        send_pushover_message("SDMA Sound Level Meter starting")
+        logger.info("Starting Sound Level Meter")
+
+        heath_check = influxdb_client.health().status
+        logger.info("InfluxDB health check returned %s", heath_check)
+        if heath_check == "pass":
+            logger.info("Connected to InfluxDB successfully.")
+        elif heath_check == "fail":
+            logger.error("Exception while connecting to InfluxDB")
+            send_pushover_message("Sound Level Meter failed to connect to InfluxDB")
+
+        # Start updating noise level
+        update()
+
+    except Exception as e:
+        with open("error.log", "a") as f:
+            f.write(str(e) + "\n")
+            f.write(traceback.format_exc())
+            logger.error(str(e))
+            logger.error(traceback.format_exc())
+
+
+# Execute the main function
 #
-#
-
-global dB
-
-try:
-    if pushover_group_key and pushover_app_api_token:
-        po_api = Client(pushover_group_key, pushover_app_api_token)
-        po_send = po_api.send(
-            Message("SDMA Sound Level Meter starting", title=pushover_msg_title)
-        )
-
-    dB = 0
-
-    logger.info("Starting Sound Level Meter")
-
-    influxdb_client = InfluxDBClient(
-        url=f"http://{influxdb_host}:{influxdb_port}",
-        token=influxdb_token,
-        org=influxdb_org,
-        timeout=influxdb_timeout,
-    )
-    write_api = influxdb_client.write_api(write_options=SYNCHRONOUS)
-
-    if influxdb_client.health():
-        logger.info("Connected to InfluxDB successfully.")
-        if pushover_group_key and pushover_app_api_token:
-            po_send = po_api.send(
-                Message("Connected to InfluxDB successfully", title=pushover_msg_title)
-            )
-    else:
-        logger.info("Error connecting to InfluxDB.")
-        if pushover_group_key and pushover_app_api_token:
-            po_send = po_api.send(
-                Message("Error connecting to InfluxDB", title=pushover_msg_title)
-            )
-
-    # Start the InfluxDB server health check in a separate thread
-    from threading import Thread
-
-    Thread(target=check_influxdb_health).start()
-
-    # Start updating noise level
-    update()
-except Exception as e:
-    with open("error.log", "a") as f:
-        f.write(str(e) + "\n")
-        f.write(traceback.format_exc())
-        logger.error(str(e))
-        logger.error(traceback.format_exc())
+if __name__ == "__main__":
+    main()
