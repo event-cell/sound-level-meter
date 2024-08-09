@@ -1,0 +1,4 @@
+pytz
+pyserial
+influxdb-client
+git+https://github.com/Nythepegasus/pushover-client/
