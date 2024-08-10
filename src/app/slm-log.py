@@ -139,7 +139,25 @@ def update():
         message_buffer = bytearray()  # Reset the message buffer for the next message
         while True:
             # receive bytes from serial until a db value is received
-            byte = ser.read(1)
+            try:
+                byte = ser.read(1)
+            except serial.SerialException:
+                logger.error("Serial communication error")
+                # loop until serial communication is restored
+                while True:
+                    try:
+                        ser.close()
+                        ser = serial.Serial(serial_device, 9600, timeout=1)
+                        byte = ser.read(1)
+                        if byte:
+                            logger.info("Serial communication restored")
+                        # reset message buffer
+                        message_buffer = bytearray()
+                        break
+                    except serial.SerialException:
+                        logger.error("Serial communication error")
+                        time.sleep(5)
+                break
             if byte:
                 # Check if the byte is the delimiter (165 -> '¥')
                 if byte == b"\xa5":  # '\xa5' is the hex representation of 165
