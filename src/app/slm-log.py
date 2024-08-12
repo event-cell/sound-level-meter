@@ -132,9 +132,9 @@ def update():
     next_compliance_sample_time = (
         milliseconds_since_start_of_day + compliance_sample_interval
     )
-    current_date = now.astimezone(log_tz).strftime("%Y-%m-%d")
 
     while True:
+        current_date = now.astimezone(log_tz).strftime("%Y-%m-%d")
         # Scan incoming packets for a dB value
         message_buffer = bytearray()  # Reset the message buffer for the next message
         while True:
