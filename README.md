@@ -22,7 +22,6 @@ Designed for use with a digitech QM1592, but may work with QM1598 (not yet teste
 - Dashboard for threshold analysis
 - Alerting on:
     - Application Start
-    - Database failure
     - Noise violation
 
 ## Hardware
