@@ -126,15 +126,17 @@ def update():
 
     # time tracking variables
     now = datetime.now(pytz.utc)
-    start_of_day = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-    milliseconds_since_start_of_day = int((now - start_of_day).total_seconds() * 1000)
-    next_sample_time = milliseconds_since_start_of_day + sample_interval
-    next_compliance_sample_time = (
-        milliseconds_since_start_of_day + compliance_sample_interval
+    start_of_script = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    milliseconds_since_start_of_script = int(
+        (now - start_of_script).total_seconds() * 1000
     )
-    current_date = now.astimezone(log_tz).strftime("%Y-%m-%d")
+    next_sample_time = milliseconds_since_start_of_script + sample_interval
+    next_compliance_sample_time = (
+        milliseconds_since_start_of_script + compliance_sample_interval
+    )
 
     while True:
+        current_date = now.astimezone(log_tz).strftime("%Y-%m-%d")
         # Scan incoming packets for a dB value
         message_buffer = bytearray()  # Reset the message buffer for the next message
         while True:
@@ -160,7 +162,7 @@ def update():
                 break
             if byte:
                 # Check if the byte is the delimiter (165 -> '¥')
-                if byte == b"\xa5":  # '\xa5' is the hex representation of 165
+                if byte.hex() == "a5":  # '\xa5' is the hex representation of 165
                     if message_buffer:
                         # Read the first byte of the message to determine the cursor position
                         msg = message_buffer
@@ -180,22 +182,20 @@ def update():
                                 )[:-4]
                                 # Fractional seconds since epoc in UTC
                                 database_timestamp = now.isoformat()
-                                start_of_day = datetime(
-                                    now.year, now.month, now.day, tzinfo=timezone.utc
-                                )
-                                milliseconds_since_start_of_day = int(
-                                    (now - start_of_day).total_seconds() * 1000
+                                milliseconds_since_start_of_script = int(
+                                    (now - start_of_script).total_seconds() * 1000
                                 )
                     break
                 else:
                     # Accumulate the byte in the buffer
                     message_buffer += byte
         while True:
-            if (key == 0x0D) and (milliseconds_since_start_of_day >= next_sample_time):
-                next_sample_time = milliseconds_since_start_of_day + sample_interval
+            if (key == 0x0D) and (
+                milliseconds_since_start_of_script >= next_sample_time
+            ):
+                next_sample_time = milliseconds_since_start_of_script + sample_interval
                 logger.info("%s, %.1f dB", timestamp, round(dB, 1))
                 write_data_to_influxdb(dB, database_timestamp)
-
                 if dB > maximum_noise_level or tracking_peak:
                     if not tracking_peak:
                         # Start tracking the peak
@@ -225,9 +225,9 @@ def update():
                     f.write(f"{timestamp},{round(dB, 1)}\n")
 
                 # Compliance resolution
-                if milliseconds_since_start_of_day >= next_compliance_sample_time:
+                if milliseconds_since_start_of_script >= next_compliance_sample_time:
                     next_compliance_sample_time = (
-                        milliseconds_since_start_of_day + compliance_sample_interval
+                        milliseconds_since_start_of_script + compliance_sample_interval
                     )
                     with open(f"{current_date}-noise-compliance.csv", "a") as f:
                         f.write(f"{timestamp},{round(dB, 1)}\n")
