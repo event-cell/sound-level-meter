@@ -1,4 +1,3 @@
-import os
 import configparser
 import logging
 import time
@@ -33,6 +32,7 @@ influxdb_token = config.get("InfluxDB", "token")
 influxdb_org = config.get("InfluxDB", "org")
 influxdb_bucket = config.get("InfluxDB", "bucket")
 influxdb_measurement = config.get("InfluxDB", "measurement")
+influxdb_measurement_compliance = f"{influxdb_measurement}-compliance"
 influxdb_location = config.get("InfluxDB", "location")
 influxdb_timeout = int(config.getint("InfluxDB", "timeout"))
 
@@ -53,9 +53,6 @@ compliance_sample_interval = int(config.get("Monitoring", "compliance_sample_int
 
 # CSV logging timezone
 log_tz = pytz.timezone(config.get("Monitoring", "timezone"))
-
-# grafana compliance log file
-grafanaComplianceLog = "logs/latest-noise-compliance.csv"
 
 # --------------------- End of Configuration  ---------------------
 
@@ -92,12 +89,12 @@ def get_low_nibble(byte):
 
 
 # Write data to InfluxDB
-def write_data_to_influxdb(dB, timestamp):
+def write_data_to_influxdb(dB, timestamp, measurement_point):
     point = (
-        Point(influxdb_measurement)
+        Point(measurement_point)
         .tag("location", influxdb_location)
         .field("dB", dB)
-        .time(timestamp, WritePrecision.MS)
+        .time(timestamp, WritePrecision.NS)
     )
     try:
         write_api.write(bucket=influxdb_bucket, org=influxdb_org, record=point)
@@ -127,14 +124,6 @@ def update():
     ser = serial.Serial(serial_device, 9600, timeout=1)
     message_buffer = bytearray()
     key = 0x00
-
-    # reset files
-
-    if os.path.exists(grafanaComplianceLog):
-        os.remove(grafanaComplianceLog)
-        logger.info(f"Deleted file: {grafanaComplianceLog}")
-    else:
-        logger.info(f"File not found: {grafanaComplianceLog}")
 
     # time tracking variables
     now = datetime.now(pytz.utc)
@@ -181,22 +170,30 @@ def update():
                         key = msg[0]
                         if key:
                             if key == 0x0D:
-                                # DB Noise Level
-                                hundreds = get_high_nibble(msg[1])
-                                tens = get_low_nibble(msg[1])
-                                ones = get_high_nibble(msg[2])
-                                tenths = get_low_nibble(msg[2])
-                                dB = hundreds * 100 + tens * 10 + ones + tenths / 10
-                                # Calculate next sample time
+                                # Record time of collection
                                 now = datetime.now(pytz.utc)
-                                timestamp = now.astimezone(log_tz).strftime(
-                                    "%Y-%m-%dT%H:%M:%S.%fZ"
-                                )[:-4]
-                                # Fractional seconds since epoc in UTC
-                                database_timestamp = now.isoformat()
-                                milliseconds_since_start_of_script = int(
-                                    (now - start_of_script).total_seconds() * 1000
-                                )
+                                # logging.info("Message: %s", message_buffer.hex())
+                                # Check if msg[1] and msg[2] exist
+                                if len(msg) > 2:
+                                    # DB Noise Level
+                                    hundreds = get_high_nibble(msg[1])
+                                    tens = get_low_nibble(msg[1])
+                                    ones = get_high_nibble(msg[2])
+                                    tenths = get_low_nibble(msg[2])
+                                    dB = hundreds * 100 + tens * 10 + ones + tenths / 10
+                                    # Calculate next sample time
+                                    timestamp = now.astimezone(log_tz).strftime(
+                                        "%Y-%m-%dT%H:%M:%S.%fZ"
+                                    )[:-4]
+                                    # Fractional seconds since epoc in UTC
+                                    database_timestamp = now.isoformat()
+                                    milliseconds_since_start_of_script = int(
+                                        (now - start_of_script).total_seconds() * 1000
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Message buffer too short to extract dB values"
+                                    )
                     break
                 else:
                     # Accumulate the byte in the buffer
@@ -207,7 +204,7 @@ def update():
             ):
                 next_sample_time = milliseconds_since_start_of_script + sample_interval
                 logger.info("%s, %.1f dB", timestamp, round(dB, 1))
-                write_data_to_influxdb(dB, database_timestamp)
+                write_data_to_influxdb(dB, database_timestamp, influxdb_measurement)
                 if dB > maximum_noise_level or tracking_peak:
                     if not tracking_peak:
                         # Start tracking the peak
@@ -243,9 +240,10 @@ def update():
                     )
                     with open(f"logs/{current_date}-noise-compliance.csv", "a") as f:
                         f.write(f"{timestamp},{round(dB, 1)}\n")
-                    # Write to a second file for grafana
-                    with open(f"logs/latest-noise-compliance.csv", "a") as f:
-                        f.write(f"{timestamp},{round(dB, 1)}\n")
+                    # write a copy to influxdb for display in Grafana
+                    write_data_to_influxdb(
+                        dB, database_timestamp, influxdb_measurement_compliance
+                    )
                 break
             else:
                 # Discard the current sample and select the next sample
