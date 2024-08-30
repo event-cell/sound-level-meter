@@ -1,3 +1,4 @@
+import os
 import configparser
 import logging
 import time
@@ -52,6 +53,9 @@ compliance_sample_interval = int(config.get("Monitoring", "compliance_sample_int
 
 # CSV logging timezone
 log_tz = pytz.timezone(config.get("Monitoring", "timezone"))
+
+# grafana compliance log file
+grafanaComplianceLog = "logs/latest-noise-compliance.csv"
 
 # --------------------- End of Configuration  ---------------------
 
@@ -123,6 +127,14 @@ def update():
     ser = serial.Serial(serial_device, 9600, timeout=1)
     message_buffer = bytearray()
     key = 0x00
+
+    # reset files
+
+    if os.path.exists(grafanaComplianceLog):
+        os.remove(grafanaComplianceLog)
+        logger.info(f"Deleted file: {grafanaComplianceLog}")
+    else:
+        logger.info(f"File not found: {grafanaComplianceLog}")
 
     # time tracking variables
     now = datetime.now(pytz.utc)
@@ -221,7 +233,7 @@ def update():
 
                 # Log data to CSV
                 # Full resolution
-                with open(f"{current_date}-noise.csv", "a") as f:
+                with open(f"logs/{current_date}-noise.csv", "a") as f:
                     f.write(f"{timestamp},{round(dB, 1)}\n")
 
                 # Compliance resolution
@@ -229,7 +241,10 @@ def update():
                     next_compliance_sample_time = (
                         milliseconds_since_start_of_script + compliance_sample_interval
                     )
-                    with open(f"{current_date}-noise-compliance.csv", "a") as f:
+                    with open(f"logs/{current_date}-noise-compliance.csv", "a") as f:
+                        f.write(f"{timestamp},{round(dB, 1)}\n")
+                    # Write to a second file for grafana
+                    with open(f"logs/latest-noise-compliance.csv", "a") as f:
                         f.write(f"{timestamp},{round(dB, 1)}\n")
                 break
             else:
