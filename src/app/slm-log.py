@@ -2,6 +2,7 @@ import configparser
 import logging
 import time
 import traceback
+import statistics
 from datetime import datetime, timezone
 
 import pytz
@@ -78,6 +79,9 @@ failed_influxdb_pings = 0
 last_dB = None
 last_timestamp = None
 
+# List to store the last 4 samples
+last_4_samples = []
+
 
 # Get the high and low nibbles of a byte
 def get_high_nibble(byte):
@@ -114,6 +118,9 @@ def send_pushover_message(message, title=None):
 
 # Function to update noise level and log it
 def update():
+    # Declare global variables
+    global last_4_samples
+
     # Initialize variables
     # Data processing variables
     dB = None
@@ -205,28 +212,46 @@ def update():
                 next_sample_time = milliseconds_since_start_of_script + sample_interval
                 logger.info("%s, %.1f dB", timestamp, round(dB, 1))
                 write_data_to_influxdb(dB, database_timestamp, influxdb_measurement)
-                if dB > maximum_noise_level or tracking_peak:
-                    if not tracking_peak:
-                        # Start tracking the peak
-                        tracking_peak = True
-                        sample_count = 0
-                        max_dB = dB
-                    else:
-                        # Update the maximum dB value
-                        if dB > max_dB:
-                            max_dB = dB
+                # if dB > maximum_noise_level or tracking_peak:
+                #     if not tracking_peak:
+                #         # Start tracking the peak
+                #         tracking_peak = True
+                #         sample_count = 0
+                #         max_dB = dB
+                #     else:
+                #         # Update the maximum dB value
+                #         if dB > max_dB:
+                #             max_dB = dB
+                #
+                #     sample_count += 1
+                #
+                #     if sample_count >= 20:
+                #         # Log the maximum dB value found in the 20 samples
+                #         send_pushover_message(
+                #             f"VIOLATION: Peak Noise Level of {max_dB} dB"
+                #         )
+                #         logger.info("VIOLATION: Peak Noise Level of %.1f dB", max_dB)
+                #         tracking_peak = False  # Stop tracking after logging the peak
+                #         max_dB = None  # Reset the peak value
+                #         sample_count = 0  # Reset the sample count
 
-                    sample_count += 1
+                # Update the list of last 4 samples
+                last_4_samples.append(dB)
+                if len(last_4_samples) > 4:
+                    last_4_samples.pop(0)
 
-                    if sample_count >= 20:
-                        # Log the maximum dB value found in the 20 samples
+                # Calculate the median value in the last 4 samples
+                if len(last_4_samples) == 4:
+                    median_dB_last_4 = statistics.median(last_4_samples)
+                    logger.info("Median dB in last 4 samples: %.1f dB", median_dB_last_4)
+
+                    if median_dB_last_4 > maximum_noise_level:
                         send_pushover_message(
-                            f"VIOLATION: Peak Noise Level of {max_dB} dB"
+                            f"VIOLATION: Median Noise Level of {median_dB_last_4} dB"
                         )
-                        logger.info("VIOLATION: Peak Noise Level of %.1f dB", max_dB)
-                        tracking_peak = False  # Stop tracking after logging the peak
-                        max_dB = None  # Reset the peak value
-                        sample_count = 0  # Reset the sample count
+                        logger.info("VIOLATION: Median Noise Level of %.1f dB", median_dB_last_4)
+
+
 
                 # Log data to CSV
                 # Full resolution
