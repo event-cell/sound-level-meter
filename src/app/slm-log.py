@@ -57,6 +57,9 @@ log_tz = pytz.timezone(config.get("Monitoring", "timezone"))
 
 # --------------------- End of Configuration  ---------------------
 
+logger.info("Configuration loaded")
+logger.info("InfluxDB Host: %s", influxdb_host)
+
 # --------------------- Initialise Connections  ---------------------
 # InfluxDB connection
 influxdb_client = InfluxDBClient(
