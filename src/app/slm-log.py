@@ -280,8 +280,8 @@ def update():
 
 def main():
     try:
-        send_pushover_message("SDMA Sound Level Meter starting")
         logger.info("Starting Sound Level Meter")
+        send_pushover_message("SDMA Sound Level Meter starting")
 
         heath_check = influxdb_client.health().status
         logger.info("InfluxDB health check returned %s", heath_check)
