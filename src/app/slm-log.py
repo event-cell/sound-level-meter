@@ -69,9 +69,6 @@ influxdb_client = InfluxDBClient(
     timeout=influxdb_timeout,
 )
 write_api = influxdb_client.write_api(write_options=SYNCHRONOUS)
-# Pushover connection
-if pushover_group_key and pushover_app_api_token:
-    po_api = Client(pushover_group_key, pushover_app_api_token)
 
 # --------------------- End Initialise Connections  ---------------------
 
@@ -94,6 +91,9 @@ def get_high_nibble(byte):
 def get_low_nibble(byte):
     return byte & 0x0F
 
+def write_pushover_message(message):
+    with open("pushover_messages.txt", "a") as file:
+        file.write(message + "\n")
 
 # Write data to InfluxDB
 def write_data_to_influxdb(dB, timestamp, measurement_point):
@@ -107,17 +107,6 @@ def write_data_to_influxdb(dB, timestamp, measurement_point):
         write_api.write(bucket=influxdb_bucket, org=influxdb_org, record=point)
     except Exception as e:
         logger.error(f"Error writing to InfluxDB")
-
-
-def send_pushover_message(message, title=None):
-    if po_api:
-        if title:
-            pushover_title = title
-        else:
-            pushover_title = pushover_msg_title
-        po_send = po_api.send(Message(message, title=pushover_title))
-        logger.info(f"Pushover Send returned {po_send}")
-
 
 # Function to update noise level and log it
 def update():
@@ -249,12 +238,10 @@ def update():
                     logger.info("Median dB in last 4 samples: %.1f dB", median_dB_last_4)
 
                     if median_dB_last_4 > maximum_noise_level:
-                        send_pushover_message(
+                        write_pushover_message(
                             f"VIOLATION: Median Noise Level of {median_dB_last_4} dB"
                         )
                         logger.info("VIOLATION: Median Noise Level of %.1f dB", median_dB_last_4)
-
-
 
                 # Log data to CSV
                 # Full resolution
@@ -281,7 +268,7 @@ def update():
 def main():
     try:
         logger.info("Starting Sound Level Meter")
-        send_pushover_message("SDMA Sound Level Meter starting")
+        write_pushover_message("SDMA Sound Level Meter starting")
 
         heath_check = influxdb_client.health().status
         logger.info("InfluxDB health check returned %s", heath_check)
@@ -289,7 +276,7 @@ def main():
             logger.info("Connected to InfluxDB successfully.")
         elif heath_check == "fail":
             logger.error("Exception while connecting to InfluxDB")
-            send_pushover_message("Sound Level Meter failed to connect to InfluxDB")
+            write_pushover_message("Sound Level Meter failed to connect to InfluxDB")
 
         # Start updating noise level
         update()
